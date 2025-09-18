@@ -1,13 +1,14 @@
-"""Config flow for ac_infinity."""
+"""Config flow for AC Infinity BLE integration."""
 from __future__ import annotations
 
 import logging
 from typing import Any
 
+import voluptuous as vol
+
 from ac_infinity_ble import ACInfinityController, DeviceInfo
 from ac_infinity_ble.protocol import parse_manufacturer_data
 from ac_infinity_ble.const import MANUFACTURER_ID
-import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.components.bluetooth import (
@@ -19,12 +20,13 @@ from homeassistant.data_entry_flow import FlowResult
 
 from .const import BLEAK_EXCEPTIONS, DOMAIN
 
-
 _LOGGER = logging.getLogger(__name__)
 
+from homeassistant import config_entries
+from .const import DOMAIN
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for AC Infinity Bluetooth."""
+    """Handle a config flow for AC Infinity BLE (HACS)."""
 
     VERSION = 1
 
@@ -37,11 +39,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> FlowResult:
         """Handle the bluetooth discovery step."""
-        await self.async_set_unique_id(discovery_info.address)
+        await self.async_set_unique_id(discovery_info.address, raise_on_progress=False)
         self._abort_if_unique_id_configured()
         self._discovery_info = discovery_info
+
+        if MANUFACTURER_ID not in discovery_info.manufacturer_data:
+            return self.async_abort(reason="no_devices_found")
+
         device: DeviceInfo = parse_manufacturer_data(
-            discovery_info.advertisement.manufacturer_data[MANUFACTURER_ID]
+            discovery_info.manufacturer_data[MANUFACTURER_ID]
         )
         self.context["title_placeholders"] = {"name": device.name}
         return await self.async_step_user()
@@ -59,8 +65,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 discovery_info.address, raise_on_progress=False
             )
             self._abort_if_unique_id_configured()
+
             controller = ACInfinityController(
-                discovery_info.device, advertisement_data=discovery_info.advertisement
+                discovery_info.device,
+                advertisement_data=discovery_info.advertisement_data,
             )
             try:
                 await controller.update()
@@ -72,17 +80,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 await controller.stop()
                 return self.async_create_entry(
-                    title=controller.name,
+                    title=getattr(controller, "name", discovery_info.address),
                     data={
                         CONF_ADDRESS: discovery_info.address,
                         CONF_SERVICE_DATA: parse_manufacturer_data(
-                            discovery_info.advertisement.manufacturer_data[
-                                MANUFACTURER_ID
-                            ]
+                            discovery_info.manufacturer_data[MANUFACTURER_ID]
                         ),
                     },
                 )
 
+        # Collect discovered devices
         if discovery := self._discovery_info:
             self._discovered_devices[discovery.address] = discovery
         else:
@@ -98,12 +105,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not self._discovered_devices:
             return self.async_abort(reason="no_devices_found")
 
-        devices = {}
+        devices: dict[str, str] = {}
         for service_info in self._discovered_devices.values():
+            if MANUFACTURER_ID not in service_info.manufacturer_data:
+                continue
             device = parse_manufacturer_data(
-                service_info.advertisement.manufacturer_data[MANUFACTURER_ID]
+                service_info.manufacturer_data[MANUFACTURER_ID]
             )
             devices[service_info.address] = f"{device.name} ({service_info.address})"
+
+        if not devices:
+            return self.async_abort(reason="no_devices_found")
 
         data_schema = vol.Schema(
             {

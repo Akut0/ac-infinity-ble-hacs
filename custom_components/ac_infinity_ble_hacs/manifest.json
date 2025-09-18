@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "domain": "ac_infinity",
-  "name": "AC Infinity",
+  "domain": "ac_infinity_ble_hacs",
+  "name": "AC Infinity BLE",
   "bluetooth": [
     {
       "connectable": true,
@@ -9,7 +9,7 @@
     }
   ],
   "codeowners": [
-    "@hunterjm"
+    "@Akut0"
   ],
   "config_flow": true,
   "dependencies": [
